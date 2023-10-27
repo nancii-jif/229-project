@@ -1,0 +1,13 @@
+'''copy pasting from run_rl.py
+'''
+import os 
+import argparse
+
+import torch
+
+import rlcard 
+from rlcard.agents import RandomAgent
+from rlard.utils import (
+	get_device,
+
+)

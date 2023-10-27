@@ -1,0 +1,211 @@
+''' An example of training a reinforcement learning agent on the environments in RLCard
+'''
+import os
+import argparse
+
+import torch
+import matplotlib.pyplot as plt
+
+
+import rlcard
+from rlcard.agents.dmc_agent import DMCTrainer
+from rlcard.agents import NFSPAgent, DQNAgent
+from rlcard.utils import (
+    get_device,
+    set_seed,
+    tournament,
+    reorganize,
+    Logger,
+    plot_curve,
+)
+
+
+def play_dqn(args):
+
+    # Check whether gpu is available
+    device = get_device()
+        
+    # Seed numpy, torch, random
+    set_seed(args.seed)
+
+    # Make the environment with seed
+    env = rlcard.make(
+        args.env,
+        config={
+            'seed': args.seed,
+        }
+    )
+
+    dmc_agent = DMCTrainer(
+        env,
+        device=device,
+        load_model=args.load_model,
+        model_path=args.model_path
+    )
+    
+    dqn_agent = DQNAgent(
+        num_actions=env.num_actions,
+        state_shape=env.state_shape[0],
+        mlp_layers=[64,64],
+        device=device,
+        save_path=args.log_dir,
+        save_every=args.save_every
+    )
+    '''
+    if args.load_checkpoint_path != "":
+        nfsp_agent = NFSPAgent.from_checkpoint(checkpoint=torch.load(args.load_checkpoint_path))
+    else:
+        nfsp_agent = NFSPAgent(
+            num_actions=env.num_actions,
+            state_shape=env.state_shape[0],
+            hidden_layers_sizes=[64,64],
+            q_mlp_layers=[64,64],
+            device=device,
+            save_path=args.log_dir,
+            save_every=args.save_every
+
+    )
+    '''
+    agents = [dqn_agent, dmc_agent]
+    env.set_agents(agents)
+
+
+    #dqn_rewards = []
+    #dmc_rewards = []
+    
+    # Start training
+    with Logger(args.log_dir) as logger:
+        for episode in range(args.num_episodes):
+            #agents[0].sample_episode_policy()
+
+            # Generate data from the environment
+            trajectories, payoffs = env.run(is_training=True)
+
+            # Reorganaize the data to be state, action, reward, next_state, done
+            trajectories = reorganize(trajectories, payoffs)
+            
+            # Feed transitions into agent memory, and train the agent
+            # Here, we assume that DQN always plays the first position
+            # and the other players play randomly (if any)
+            dmc_agent.train(trajectories)
+            
+            for ts in trajectories[0]:
+               dqn_agent.feed(ts)
+
+            #nfsp_agent.sample_episode_policy()
+
+            # Evaluate the performance. Play with random agents.
+            if episode % args.evaluate_every == 0:                
+                logger.log_performance(
+                    episode,
+                    tournament(
+                        env,
+                        args.num_eval_games,
+                    )[0]
+                )
+
+        # Get the paths
+        csv_path, fig_path = logger.csv_path, logger.fig_path
+
+    # Plot the learning curve
+    # plot_curve(csv_path, fig_path, args.algorithm)
+    # Save model
+    save_path_dqn = os.path.join(args.log_dir, 'model_dqn.pth')
+    save_path_dmc = os.path.join(args.log_dir, 'model_dmc.pth')
+    torch.save(dqn_agent, save_path_dqn)
+    torch.save(dmc_agent, save_path_dmc)
+    print('DQN Model saved in', save_path_dqn)
+    print('DMC Model saved in', save_pathd_dmc)
+    '''
+    episodes = list(range(0, args.num_episodes, args.evaluate_every))
+
+    plt.plot(episodes, dqn_rewards, label='dqn')
+    plt.plot(episodes, nfsp_rewards, label='nfsp')
+
+    plt.xlabel('episode')
+    plt.ylabel('reward')
+    plt.legend()
+
+    fig_path = 'lhresults/dqn_nfsp_compete_result/plot.png'
+    plt.savefig(fig_path)
+    '''
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser("DQN/NFSP example in RLCard")
+    parser.add_argument(
+        '--env',
+        type=str,
+        default='leduc-holdem',
+        choices=[
+            'blackjack',
+            'leduc-holdem',
+            'limit-holdem',
+            'doudizhu',
+            'mahjong',
+            'no-limit-holdem',
+            'uno',
+            'gin-rummy',
+            'bridge',
+        ],
+    )
+    parser.add_argument(
+        '--algorithm',
+        type=str,
+        default='dqn',
+        choices=[
+            'dqn',
+            'dmc',
+        ],
+    )
+    parser.add_argument(
+        '--cuda',
+        type=str,
+        default='',
+    )
+    parser.add_argument(
+        '--seed',
+        type=int,
+        default=42,
+    )
+    parser.add_argument(
+        '--num_episodes',
+        type=int,
+        default=5000,
+    )
+    parser.add_argument(
+        '--load_model',
+        action='store_true',
+        help='load existing dmc model',
+    )
+    
+    parser.add_argument(
+        '--num_eval_games',
+        type=int,
+        default=2000,
+    )
+    parser.add_argument(
+        '--evaluate_every',
+        type=int,
+        default=100,
+    )
+    parser.add_argument(
+        '--log_dir',
+        type=str,
+        default='lhresults/dqn_nfsp_compete_result/',
+    )
+    
+    parser.add_argument(
+        "--load_checkpoint_path",
+        type=str,
+        default="",
+    )
+    
+    parser.add_argument(
+        "--save_every",
+        type=int,
+        default=-1)
+
+    args = parser.parse_args()
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = args.cuda
+    play_dqn(args)
